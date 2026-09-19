@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>本地 OCR 测试 · PP-OCRv5</title>
+<style>
+body{font:13px/1.6 monospace;margin:16px;background:#111;color:#eee}
+pre{white-space:pre-wrap;word-break:break-all;background:#000;padding:10px;border-radius:8px;max-height:65vh;overflow:auto}
+img{max-width:100%;border:1px solid #444}
+.ok{color:#5f5}.err{color:#f66}.dim{color:#888}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "onnxruntime-web": "/vendor/ort/ort.wasm.min.mjs"
+  }
+}
+</script>
+</head>
+<body>
+<h3>PP-OCRv5 · 浏览器本地识别</h3>
+<img id="src" src="/ocrtest.png" alt="">
+<pre id="log">加载中…</pre>
+<script type="module">
+const el = document.getElementById("log");
+const log = (m, cls) => { el.innerHTML += (cls ? `<span class="${cls}">${m}</span>` : m) + "\n"; };
+const BOOT = performance.now();
+try {
+  log("导入引擎…", "dim");
+  const { OcrEngine } = await import("/vendor/ocr/core.js");
+  log(`引擎代码就绪 ${((performance.now() - BOOT) / 1000).toFixed(1)}s`, "ok");
+
+  const t0 = performance.now();
+  const engine = await OcrEngine.create({
+    models: {
+      detection: "/vendor/ocr/models/ppocrv5_det.onnx",
+      recognition: "/vendor/ocr/models/ppocrv5_rec.onnx",
+    },
+    dictionary: "/vendor/ocr/models/ppocrv5_dict.txt",
+    wasmPaths: "/vendor/ort/",
+    runtime: "wasm",
+    numThreads: 1,
+    onProgress: (p) => log(`  加载 ${p.file} ${(p.loaded / 1024 / 1024).toFixed(1)}MB`, "dim"),
+  });
+  log(`模型就绪 ${((performance.now() - t0) / 1000).toFixed(1)}s`, "ok");
+
+  const img = document.getElementById("src");
+  if (!img.complete) await new Promise((r) => { img.onload = r; });
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext("2d").drawImage(img, 0, 0);
+  const t1 = performance.now();
+  const res = await engine.recognize(canvas, { detThreshold: 0.2, unclipRatio: 1.8, maxSideLen: 1280 });
+  log(`识别完成 ${((performance.now() - t1) / 1000).toFixed(1)}s（引擎内部 ${res.durationMs}ms）`, "ok");
+  log("---------");
+  for (const line of res.lines) {
+    log(`[${line.confidence.toFixed(2)}] ${line.text}`);
+  }
+  log("---------");
+  log("总耗时 " + ((performance.now() - BOOT) / 1000).toFixed(1) + "s");
+} catch (e) {
+  log("失败: " + (e && e.stack || e), "err");
+}
+</script>
+</body>
+</html>

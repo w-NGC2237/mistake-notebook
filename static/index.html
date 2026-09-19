@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#5b5bd6">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="考公错题本">
+<meta name="mobile-web-app-capable" content="yes">
+<title>考公错题本</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+  #boot-error {
+    display: none;
+    margin: 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: #fdecec;
+    color: #b91c1c;
+    font: 12px/1.6 ui-monospace, Consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>
+</head>
+<body>
+<div id="boot-error"></div>
+<script>
+  /* 启动阶段一旦出错，直接把原因显示出来，方便排查（手机上没有控制台） */
+  (function () {
+    var box = document.getElementById("boot-error");
+    function show(msg) {
+      if (!box) return;
+      box.style.display = "block";
+      box.textContent += (box.textContent ? "\n\n" : "") + msg;
+    }
+    window.__bootShow = show;
+    window.addEventListener("error", function (e) {
+      if (e && e.message) {
+        show("脚本错误：" + e.message + "\n" + (e.filename || "") + " : " + (e.lineno || ""));
+      } else if (e && e.target && (e.target.src || e.target.href)) {
+        show("资源加载失败：" + (e.target.src || e.target.href));
+      }
+    }, true);
+    window.addEventListener("unhandledrejection", function (e) {
+      var r = e && e.reason;
+      show("未处理的错误：" + ((r && (r.stack || r.message)) || r));
+    });
+  })();
+</script>
+<div id="toast" class="toast"></div>
+<header class="topbar">
+  <h1 id="page-title">导入错题</h1>
+  <div id="top-actions" class="top-actions"></div>
+</header>
+<main id="view"></main>
+<datalist id="subtype-list"></datalist>
+<nav class="tabbar">
+  <button class="tab active" data-tab="import"><span>📷</span>导入</button>
+  <button class="tab" data-tab="list"><span>📚</span>错题本</button>
+  <button class="tab" data-tab="practice"><span>✍️</span>刷题</button>
+  <button class="tab" data-tab="stats"><span>📊</span>统计</button>
+</nav>
+<script type="module" src="app.js"></script>
+</body>
+</html>

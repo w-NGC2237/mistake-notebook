@@ -1,0 +1,6 @@
+.venv/
+data/
+test_*.py
+test_ocr.png
+__pycache__/
+*.pyc

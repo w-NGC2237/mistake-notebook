@@ -1,0 +1,24 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@capacitor/android": "^6.2.2",
+    "@capacitor/cli": "^6.2.2",
+    "@capacitor/core": "^6.2.2",
+    "@ocr-web/core": "^0.2.1",
+    "@ocr-web/models-ppocrv5": "^0.1.1",
+    "@paddlejs-models/ocr": "^1.2.4",
+    "onnxruntime-web": "^1.30.0",
+    "tesseract.js": "^7.0.0",
+    "ws": "^8.21.3"
+  }
+}
