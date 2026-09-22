@@ -6,6 +6,9 @@ const NUM_START =
 
 // 一个选项：A. / A、 / A） / (A) / A：
 const OPTION = /^\s*[(（]?\s*([A-Ha-h])\s*[.、．)）:：]\s*(.+)$/;
+// 兜底规则：笔迹盖住分隔符时，"A 25天" 也要能认出来。
+// 只在"一行里能连出 A、B、C、D"时启用，避免把题干里的字母误判成选项。
+const OPTION_ANY = /^\s*[(（]?\s*([A-Ha-h])\s*[.、．)）:：]?\s+(.+)$/;
 
 // 严格切分
 const OPT_STRICT = /(?<=[\s，,；;、。：:）)】\]\}>])(?=[A-Ha-h]\s*[.、．)）]\s*)/;
@@ -65,11 +68,15 @@ function consecutive(keys) {
   return true;
 }
 
-function validate(line, pattern) {
+function matchOption(seg, permissive) {
+  return OPTION.exec(seg) || (permissive ? OPTION_ANY.exec(seg) : null);
+}
+
+function validate(line, pattern, permissive = false) {
   const segs = line.split(pattern).map((s) => s.trim()).filter(Boolean);
   if (!segs.length) return null;
   const keys = segs.map((seg) => {
-    const m = OPTION.exec(seg);
+    const m = matchOption(seg, permissive);
     return m ? m[1].toUpperCase() : null;
   });
   let first = -1;
@@ -83,17 +90,20 @@ function validate(line, pattern) {
     consecutive(matched) &&
     (matched[0] === "A" || first === 0)
   ) return segs;
-  if (matched.length === 1 && first === 0 && keys.length === 1) return segs;
+  // 兜底规则不参与单选项判断，否则 "A 点处的电场强度" 这类题干会被误认成选项
+  if (!permissive && matched.length === 1 && first === 0 && keys.length === 1) return segs;
   return null;
 }
 
 /** 把一行切成若干选项片段；判断不出是选项就返回 null */
 export function splitOptions(line) {
-  const strict = validate(line, OPT_STRICT);
+  const strict = validate(line, OPT_STRICT, false);
   if (strict && strict.length >= 2) return strict;
-  const loose = validate(line, OPT_LOOSE);
+  const loose = validate(line, OPT_LOOSE, false);
   if (loose && loose.length >= 2) return loose;
-  return strict || loose;
+  const anyopt = validate(line, OPT_LOOSE, true);
+  if (anyopt && anyopt.length >= 2) return anyopt;
+  return strict || loose || anyopt;
 }
 
 export function parseBlock(block) {
@@ -107,7 +117,7 @@ export function parseBlock(block) {
 
   const takeOptions = (segments) => {
     for (const seg of segments) {
-      const m = OPTION.exec(seg);
+      const m = matchOption(seg, true);
       if (m) {
         currentOpt = m[1].toUpperCase();
         options[currentOpt] = m[2].trim();

@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
@@ -196,10 +196,16 @@ def _draft_item(item: dict) -> dict:
 
 
 @app.post("/api/import")
-async def api_import(files: list[UploadFile] = File(...)):
-    """上传图片 → OCR → 拆题 → 自动分类，返回待确认的草稿。"""
+async def api_import(files: list[UploadFile] = File(...), ops: str = Form("")):
+    """上传图片 → 预处理 → OCR → 拆题 → 自动分类，返回待确认的草稿。"""
     if not files:
         raise HTTPException(400, "没有收到图片")
+    ocr_ops = None
+    if ops:
+        try:
+            ocr_ops = json.loads(ops)
+        except (json.JSONDecodeError, TypeError):
+            ocr_ops = None
     if not ocr_engine.available():
         raise HTTPException(
             503,
@@ -214,7 +220,7 @@ async def api_import(files: list[UploadFile] = File(...)):
         name = save_image(raw_bytes)
         path = IMAGE_DIR / name
         try:
-            result = ocr_engine.recognize(path)
+            result = ocr_engine.recognize(path, ocr_ops)
         except Exception as exc:
             drafts.append({
                 "image": name, "image_url": f"/images/{name}",
@@ -251,6 +257,7 @@ async def api_import(files: list[UploadFile] = File(...)):
             "raw_text": text,
             "avg_score": result["avg_score"],
             "image_only": image_only,
+            "proc": result.get("proc"),
             "items": items,
         })
 
