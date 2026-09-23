@@ -1,7 +1,7 @@
 /* 考公错题本 · 离线缓存
  * 只缓存界面外壳和本地识别引擎；所有 /api/ 请求一律走网络，不缓存。
  */
-const CACHE = "cuotiben-v2";
+const CACHE = "cuotiben-v3";
 const SHELL = [
   "./",
   "index.html",
@@ -15,6 +15,8 @@ const SHELL = [
   "lib/parser.js",
   "lib/localdb.js",
   "lib/localocr.js",
+  "lib/imageproc.js",
+  "lib/crop.js",
 ];
 
 self.addEventListener("install", (e) => {

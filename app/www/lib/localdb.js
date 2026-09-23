@@ -214,7 +214,7 @@ async function buildStats() {
 
 /* ---------------------------------------------------------- 导入 */
 
-async function buildDrafts(files, onProgress) {
+async function buildDrafts(files, onProgress, ops) {
   const drafts = [];
   let i = 0;
   for (const file of files) {
@@ -223,7 +223,7 @@ async function buildDrafts(files, onProgress) {
     const name = await saveImage(file);
     let result;
     try {
-      result = await recognizeFile(file);
+      result = await recognizeFile(file, { ops });
     } catch (e) {
       drafts.push({
         image: name, image_url: imageUrls.get(name), raw_text: "",
@@ -256,6 +256,7 @@ async function buildDrafts(files, onProgress) {
     drafts.push({
       image: name, image_url: imageUrls.get(name), raw_text: text,
       avg_score: result.avgScore, image_only: imageOnly, items,
+      proc: result.meta || null,
     });
   }
   return drafts;
@@ -298,7 +299,7 @@ export async function localApi(path, options = {}) {
     const files = body && body.getAll ? body.getAll("files").filter((f) => f && f.size) : [];
     if (!files.length) throw new Error("没有收到图片");
     await loadImageUrls();
-    return { drafts: await buildDrafts(files, options.onProgress) };
+    return { drafts: await buildDrafts(files, options.onProgress, options.ops) };
   }
 
   if (rawPath === "/api/parse-text" && method === "POST") {
@@ -480,4 +481,67 @@ export async function importBackup(text) {
 
 export async function countAll() {
   return (await all("questions")).length;
+}
+
+/** 某张图片已经没有任何错题引用时，把它的数据删掉，避免重新裁剪后越攒越多 */
+export async function releaseImage(name) {
+  if (!name) return;
+  const used = (await all("questions")).some((q) => q.image === name);
+  if (used) return;
+  await del("images", name);
+  const url = imageUrls.get(name);
+  if (url) { URL.revokeObjectURL(url); imageUrls.delete(name); }
+}
+
+/* ---------------------------------------------------------- 自动快照
+ *
+ * 存在 localStorage 里，和主数据库完全分开：
+ *   - 不动 IndexedDB 的结构，所以不存在"升级把数据弄丢"的风险
+ *   - 只存题目本身（不含图片二进制），体积小
+ *   - 万一哪天升级出问题，可以在这里补回来
+ */
+const SNAPSHOT_KEY = "autoSnapshot";
+const SNAPSHOT_MAX = 4000;
+
+export async function writeSnapshot(force = false) {
+  const qs = await all("questions");
+  if (!qs.length) return null;
+  let prev = null;
+  try { prev = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || "null"); } catch { prev = null; }
+  if (!force && prev && prev.at && prev.count === qs.length) {
+    const age = Date.now() - new Date(prev.at).getTime();
+    if (age < 12 * 3600 * 1000) return { count: prev.count, at: prev.at, skipped: true };
+  }
+  const payload = { at: new Date().toISOString(), count: qs.length, questions: qs.slice(0, SNAPSHOT_MAX) };
+  try {
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(payload));
+  } catch {
+    return null;   // 容量不够就算了，不能影响正常使用
+  }
+  return { count: payload.count, at: payload.at, skipped: false };
+}
+
+export function readSnapshot() {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    return { at: p.at, count: p.count || (p.questions || []).length, questions: p.questions || [] };
+  } catch {
+    return null;
+  }
+}
+
+/** 把快照里缺失的题目补回来，已有的按 id 跳过，不会覆盖 */
+export async function restoreSnapshot() {
+  const snap = readSnapshot();
+  if (!snap || !snap.questions.length) return { added: 0, total: 0 };
+  const existing = new Set((await all("questions")).map((q) => q.id));
+  let added = 0;
+  for (const q of snap.questions) {
+    if (existing.has(q.id)) continue;
+    await put("questions", q);
+    added += 1;
+  }
+  return { added, total: snap.questions.length };
 }

@@ -375,3 +375,91 @@ label.field > span {
 @media (min-width: 560px) {
   .stat-grid { grid-template-columns: repeat(4, 1fr); }
 }
+
+
+/* ---------------- 裁剪编辑器 ---------------- */
+.crop-mask {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(10, 12, 18, .82);
+  display: flex; align-items: center; justify-content: center;
+  padding: 12px; padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+.crop-panel {
+  width: 100%; max-width: 720px;
+  max-height: 100%;
+  background: var(--bg);
+  border-radius: 16px;
+  padding: 12px;
+  display: flex; flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+.crop-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600; font-size: 15px;
+}
+.crop-stage {
+  position: relative;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+  flex: 0 0 auto;
+}
+.crop-stage canvas { display: block; width: 100%; height: 100%; }
+.crop-rect {
+  position: absolute;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(10, 12, 18, .5);
+  cursor: move;
+  touch-action: none;
+}
+.crop-h {
+  position: absolute;
+  width: 22px; height: 22px;
+  background: #fff;
+  border: 2px solid var(--accent);
+  border-radius: 5px;
+  box-sizing: border-box;
+}
+.crop-nw { left: 0; top: 0; }
+.crop-n  { left: 50%; top: 0; margin-left: -11px; }
+.crop-ne { right: 0; top: 0; }
+.crop-e  { right: 0; top: 50%; margin-top: -11px; }
+.crop-se { right: 0; bottom: 0; }
+.crop-s  { left: 50%; bottom: 0; margin-left: -11px; }
+.crop-sw { left: 0; bottom: 0; }
+.crop-w  { left: 0; top: 50%; margin-top: -11px; }
+.crop-hint {
+  font-size: 12px; color: var(--ink-2); text-align: center; min-height: 18px;
+}
+.crop-tools {
+  display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+}
+.crop-actions { display: flex; gap: 8px; }
+.crop-actions .btn { padding: 11px 16px; }
+
+/* 待识别图片上的操作按钮 */
+.thumb .ops {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; gap: 1px;
+}
+.thumb .ops button {
+  flex: 1; border: 0; cursor: pointer;
+  background: rgba(18, 20, 28, .72);
+  color: #fff; font: inherit; font-size: 11px;
+  padding: 5px 0; line-height: 1;
+}
+.thumb .ops button:active { background: rgba(18, 20, 28, .9); }
+.thumb .badge {
+  position: absolute; top: 4px; left: 4px;
+  background: rgba(18, 20, 28, .72); color: #fff;
+  font-size: 10px; padding: 2px 6px; border-radius: 999px;
+}
+
+/* 处理说明行 */
+.proc-note {
+  font-size: 11px; color: var(--ink-3); margin-top: 4px;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}

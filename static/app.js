@@ -6,7 +6,11 @@
  * 所有数据操作都走 api()，模式对上面的界面代码是透明的。
  */
 
-import { localApi, exportBackup, importBackup } from "./lib/localdb.js";
+import {
+  localApi, exportBackup, importBackup, releaseImage,
+  writeSnapshot, readSnapshot, restoreSnapshot,
+} from "./lib/localdb.js";
+import { openCropEditor, loadOps, saveOps } from "./lib/crop.js";
 import { warmUp, setProgressHandler } from "./lib/localocr.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -229,25 +233,48 @@ function renderImport() {
   drawDrafts();
 }
 
+const thumbUrls = new WeakMap();
+function fileUrl(file) {
+  let url = thumbUrls.get(file);
+  if (!url) { url = URL.createObjectURL(file); thumbUrls.set(file, url); }
+  return url;
+}
+
 function drawThumbs() {
   const box = $("#thumbs");
   if (!box) return;
   box.innerHTML = S.staged.map((f, i) => `
     <div class="thumb">
-      <img src="${URL.createObjectURL(f)}" alt="">
+      <img src="${fileUrl(f)}" alt="">
+      ${f.__cropped ? `<span class="badge">已裁剪</span>` : ""}
       <button class="x" data-i="${i}">✕</button>
+      <div class="ops"><button data-crop="${i}">裁剪</button></div>
     </div>`).join("");
   $$(".thumb .x", box).forEach((b) => b.addEventListener("click", () => {
     S.staged.splice(Number(b.dataset.i), 1);
     drawThumbs();
   }));
+  $$("[data-crop]", box).forEach((b) => b.addEventListener("click", () => cropStaged(Number(b.dataset.crop))));
 
   const actions = $("#import-actions");
   actions.innerHTML = S.staged.length
-    ? `<button class="btn block" id="do-import">识别这 ${S.staged.length} 张图片</button>`
+    ? `<button class="btn block" id="do-import">识别这 ${S.staged.length} 张图片</button>
+       <div class="proc-note">识别前会自动去掉红蓝笔迹、扶正倾斜。只想识别某道题，点缩略图上的「裁剪」先框住范围。</div>`
     : "";
   const btn = $("#do-import");
   if (btn) btn.addEventListener("click", doImport);
+}
+
+/** 裁剪待识别的图片，替换掉原来的文件 */
+async function cropStaged(index) {
+  const file = S.staged[index];
+  if (!file) return;
+  const out = await openCropEditor(file, { ops: loadOps(), name: file.name || "photo" });
+  if (!out) return;
+  out.file.__cropped = true;
+  S.staged[index] = out.file;
+  drawThumbs();
+  toast(`已裁剪为 ${out.width}×${out.height}`);
 }
 
 async function doImport() {
@@ -266,6 +293,7 @@ async function doImport() {
     const data = await api("/api/import", {
       method: "POST",
       body: form,
+      ops: loadOps(),
       onProgress: (i, n) => setLabel(`正在识别第 ${i} / ${n} 张图片…`),
     });
     S.drafts = data.drafts;
@@ -289,7 +317,14 @@ function drawDrafts() {
   const total = S.drafts.reduce((s, d) => s + (d.items?.length || 0), 0);
   box.innerHTML = S.drafts.map((d, di) => `
     <div class="card" data-draft="${di}">
-      ${d.image_url ? `<img class="draft-img" src="${esc(d.image_url)}" data-zoom="${esc(d.image_url)}" alt="">` : ""}
+      ${d.image_url ? `<img class="draft-img" src="${esc(d.image_url)}" data-zoom="${esc(d.image_url)}" alt="">
+      <div class="proc-note">
+        <button class="btn soft sm" data-recrop="${di}">重新裁剪识别</button>
+        ${d.proc && Math.abs(d.proc.angle || 0) >= 0.25
+          ? `<span class="tag grey">已扶正 ${Math.abs(d.proc.angle).toFixed(1)}\u00b0</span>` : ""}
+        ${d.proc && ((d.proc.inkRemoved || 0) + (d.proc.pencilRemoved || 0)) > 0
+          ? `<span class="tag grey">已擦除手写笔迹</span>` : ""}
+      </div>` : ""}
       ${d.error ? `<div class="verdict bad" style="margin-top:10px">${esc(d.error)}</div>` : ""}
       ${d.error ? "" : `<div class="tiny" style="margin:8px 0 4px">
         ${d.image_only ? "⚠️ 这张图几乎没有文字，已按图片题处理，请手动确认题型 · " : ""}
@@ -313,6 +348,8 @@ function drawDrafts() {
       <div class="answer-block"><p>${esc(d.raw_text || "（空）")}</p></div>
       <button class="btn block soft" style="margin-top:14px" onclick="this.closest('.sheet-mask').remove()">关闭</button>`);
   }));
+  $$("[data-recrop]", box).forEach((b) =>
+    b.addEventListener("click", () => recropDraft(Number(b.dataset.recrop))));
   $$(".sel-category", box).forEach((sel) => sel.addEventListener("change", () => {
     const it = S.drafts[Number(sel.dataset.di)].items[Number(sel.dataset.ii)];
     fillSubtypeList(sel.value);
@@ -323,6 +360,34 @@ function drawDrafts() {
 
   const saveAll = $("#save-all");
   if (saveAll) saveAll.addEventListener("click", saveAllDrafts);
+}
+
+/** 对已经有草稿的图片重新框一次范围，只保留新识别的结果 */
+async function recropDraft(di) {
+  const d = S.drafts[di];
+  if (!d || !d.image_url) return;
+  let blob;
+  try {
+    blob = await (await fetch(d.image_url)).blob();
+  } catch (e) {
+    return toast("原图读取失败：" + (e && e.message ? e.message : e), true);
+  }
+  const out = await openCropEditor(blob, { ops: loadOps(), name: "recrop" });
+  if (!out) return;
+  const form = new FormData();
+  form.append("files", out.file, out.file.name);
+  try {
+    const data = await api("/api/import", { method: "POST", body: form, ops: loadOps() });
+    const fresh = data.drafts && data.drafts[0];
+    if (!fresh || !fresh.items || !fresh.items.length) return toast("这块区域没识别出内容，换个范围再试", true);
+    const oldImage = d.image;
+    S.drafts[di] = fresh;
+    drawDrafts();
+    if (S.mode === "local" && oldImage && oldImage !== fresh.image) {
+      releaseImage(oldImage).catch(() => {});
+    }
+    toast(`重新识别出 ${fresh.items.length} 道题`);
+  } catch (e) { toast(e.message, true); }
 }
 
 function draftItem(di, ii, it) {
@@ -1067,6 +1132,14 @@ async function renderStats() {
     </div>
     <div class="card">
       <h3 style="margin:0 0 10px;font-size:14px">数据与设置</h3>
+      <div style="padding:4px 0 8px">
+        <div class="tiny" style="margin-bottom:6px">识别前处理（拍照歪了、有笔迹时保持打开）</div>
+        <div class="chips" id="ops-chips">
+          <button class="chip${loadOps().ink ? " active" : ""}" data-ops="ink">去红蓝笔迹</button>
+          <button class="chip${loadOps().pencil ? " active" : ""}" data-ops="pencil">去铅笔痕</button>
+          <button class="chip${loadOps().deskew ? " active" : ""}" data-ops="deskew">自动扶正</button>
+        </div>
+      </div>
       <div class="spread" style="padding:4px 0">
         <span>当前模式</span>
         <span class="tag ${S.mode === "local" ? "ok" : ""}">${
@@ -1081,6 +1154,18 @@ async function renderStats() {
           ? "数据全部存在这台手机里，不上传任何服务器。换手机时用备份文件搬过去。"
           : "数据存在电脑的 data 文件夹里。想在手机上离线用，请安装打包好的 App。"}
       </div>
+      ${S.mode === "local" ? `
+      <div class="spread" style="padding:4px 0;margin-top:6px">
+        <span>自动快照</span>
+        <span class="tag grey">${snapLabel()}</span>
+      </div>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <button class="btn soft grow" id="ex-snap">立即快照</button>
+        <button class="btn soft grow" id="ex-restore-snap">从快照恢复</button>
+      </div>
+      <div class="tiny" style="margin-top:6px">
+        快照只存题目文字，存在另一处，和主数据分开。升级或误删之后可以用它补回来。
+      </div>` : ""}
       <button class="btn ghost block sm" id="ex-mode" style="margin-top:10px">
         切换数据模式（当前：${S.mode === "local" ? "手机本地" : "连接电脑"}）</button>
     </div>
@@ -1091,6 +1176,27 @@ async function renderStats() {
   $("#ex-backup").addEventListener("click", doBackup);
   $("#ex-restore").addEventListener("click", doRestore);
   $("#ex-mode").addEventListener("click", switchMode);
+  $("#ex-snap")?.addEventListener("click", async () => {
+    const r = await writeSnapshot(true);
+    if (r) { toast(`已保存快照：${r.count} 道题`); render(); }
+    else toast("没有可保存的题目", true);
+  });
+  $("#ex-restore-snap")?.addEventListener("click", async () => {
+    const snap = readSnapshot();
+    if (!snap || !snap.questions.length) return toast("还没有快照", true);
+    if (!confirm(`从 ${snap.at.slice(0, 10)} 的快照恢复 ${snap.count} 道题？\n只会补齐缺失的，不动现有数据。`)) return;
+    const r = await restoreSnapshot();
+    await loadMeta();
+    toast(r.added ? `补回 ${r.added} 道题` : "没有需要补的，数据是完整的");
+    render();
+  });
+  $$("#ops-chips .chip").forEach((c) => c.addEventListener("click", () => {
+    const ops = loadOps();
+    ops[c.dataset.ops] = !ops[c.dataset.ops];
+    saveOps(ops);
+    c.classList.toggle("active", ops[c.dataset.ops]);
+    toast(`${c.textContent}已${ops[c.dataset.ops] ? "打开" : "关闭"}`);
+  }));
 }
 
 async function exportCsv() {
@@ -1205,6 +1311,12 @@ $$(".tab").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
   }
 })();
 
+function snapLabel() {
+  const snap = readSnapshot();
+  if (!snap || !snap.questions.length) return "还没有";
+  return `${snap.count} 道 · ${snap.at.slice(5, 10)}`;
+}
+
 async function boot() {
   S.mode = await detectMode();
   if ("serviceWorker" in navigator && location.protocol !== "file:") {
@@ -1216,5 +1328,7 @@ async function boot() {
   if (S.mode === "local") {
     setProgressHandler(null);
     setTimeout(() => warmUp(), 1200);
+    // 后台留一份题目快照，和主数据分开存
+    writeSnapshot().catch(() => {});
   }
 }

@@ -22,6 +22,11 @@ _NUM_START = re.compile(
 _OPTION = re.compile(
     r"^\s*[(（]?\s*(?P<key>[A-Ha-h])\s*[.、．)）:：]\s*(?P<val>.+)$"
 )
+# 兜底规则：笔迹把分隔符盖住时，"A 25天" 这种也要能认出来。
+# 只在"一行里能连出 A、B、C、D"时才启用，避免把题干里的字母误判成选项。
+_OPTION_ANY = re.compile(
+    r"^\s*[(（]?\s*(?P<key>[A-Ha-h])\s*[.、．)）:：]?\s+(?P<val>.+)$"
+)
 
 # 严格切分：顿号、空位等常规分隔
 _OPT_STRICT = re.compile(
@@ -86,14 +91,21 @@ def _cut(line: str, pattern: re.Pattern) -> tuple[str, str | None]:
     return rest, (val or None)
 
 
-def _validate(line: str, pattern: re.Pattern) -> list[str] | None:
+def _match_option(seg: str, permissive: bool = False):
+    m = _OPTION.match(seg)
+    if m:
+        return m
+    return _OPTION_ANY.match(seg) if permissive else None
+
+
+def _validate(line: str, pattern: re.Pattern, permissive: bool = False) -> list[str] | None:
     """按某个分隔规则切开，并判断切出来的确实像一组选项。"""
     segs = [s.strip() for s in pattern.split(line) if s.strip()]
     if not segs:
         return None
     keys: list[str | None] = []
     for seg in segs:
-        m = _OPTION.match(seg)
+        m = _match_option(seg, permissive)
         keys.append(m.group("key").upper() if m else None)
     first = next((i for i, k in enumerate(keys) if k), None)
     if first is None:
@@ -109,8 +121,9 @@ def _validate(line: str, pattern: re.Pattern) -> list[str] | None:
         and (matched[0] == "A" or first == 0)
     ):
         return segs
-    # 整行只有一个选项，且就在行首
-    if len(matched) == 1 and first == 0 and len(keys) == 1:
+    # 整行只有一个选项，且就在行首。兜底规则不参与单选项判断，
+    # 否则 "A 点处的电场强度" 这类题干会被误认成选项。
+    if not permissive and len(matched) == 1 and first == 0 and len(keys) == 1:
         return segs
     return None
 
@@ -118,8 +131,9 @@ def _validate(line: str, pattern: re.Pattern) -> list[str] | None:
 def _split_options(line: str) -> list[str] | None:
     """把一行切成若干选项片段；判断不出是选项就返回 None。
 
-    优先用严格规则，只有严格规则切不出多个选项时才用宽松规则，
-    这样 "A.25天B.30天" 能切开，而 "设A、B两点" 不会被误切。
+    依次尝试：严格分隔 → 宽松分隔（OCR 吃掉空格）→ 兜底（笔迹盖住分隔符）。
+    这样 "A.25天B.30天" 能切开，"设A、B两点" 不会被误切，
+    "A 25天  B.30天" 这种被笔迹破坏的也能救回来。
     """
     strict = _validate(line, _OPT_STRICT)
     if strict and len(strict) >= 2:
@@ -127,7 +141,10 @@ def _split_options(line: str) -> list[str] | None:
     loose = _validate(line, _OPT_LOOSE)
     if loose and len(loose) >= 2:
         return loose
-    return strict or loose
+    anyopt = _validate(line, _OPT_LOOSE, permissive=True)
+    if anyopt and len(anyopt) >= 2:
+        return anyopt
+    return strict or loose or anyopt
 
 
 def _consecutive(keys: list[str]) -> bool:
@@ -147,7 +164,7 @@ def parse_block(block: str) -> dict:
     def take_options(segments: list[str]) -> None:
         nonlocal current_opt
         for seg in segments:
-            m = _OPTION.match(seg)
+            m = _match_option(seg, permissive=True)
             if m:
                 current_opt = m.group("key").upper()
                 options[current_opt] = m.group("val").strip()
